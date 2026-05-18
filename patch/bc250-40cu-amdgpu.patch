@@ -1,0 +1,95 @@
+From: duggasco <duggasco@gmail.com>
+Subject: [PATCH] drm/amdgpu: BC-250 40 CU re-enablement via CC + SPI register writes
+
+Add module parameter bc250_cc_write_mode to re-enable harvested CUs on
+the AMD BC-250 (gfx1013 / Cyan Skillfish). When set to 3, clears the
+CC_GC_SHADER_ARRAY_CONFIG harvest mask and writes
+SPI_PG_ENABLE_STATIC_WGP_MASK to enable dispatch to all 5 WGPs per
+shader array during gfx_v10_0_get_cu_info().
+
+Both registers are required: CC controls software enumeration (what
+the driver/RADV/KFD report), SPI controls hardware wave dispatch
+(which WGPs actually receive work). Neither alone produces compute
+scaling.
+
+Guarded by PCI device ID 0x13FE (BC-250 only) and defaults to 0 (off).
+
+Tested: pp512 302 tok/s (24 CU) -> 466 tok/s (40 CU) = 1.54x at 2 GHz.
+At 1500 MHz: 230 -> 372 tok/s = 1.61x with sustainable thermals.
+
+Signed-off-by: duggasco <duggasco@gmail.com>
+---
+
+NOTE: This patch modifies gfx_v10_0.c. The exact context lines may
+differ across kernel versions. The build script (scripts/bc250-enable-40cu.sh)
+uses awk-based insertion that works across versions without context matching.
+
+To apply manually, add the following two blocks to gfx_v10_0.c:
+
+1. Near the top, before '#include "amdgpu.h"', add the module parameter.
+2. Inside gfx_v10_0_get_cu_info(), after mutex_lock(&adev->grbm_idx_mutex),
+   add the register write block.
+
+--- a/drivers/gpu/drm/amd/amdgpu/gfx_v10_0.c
++++ b/drivers/gpu/drm/amd/amdgpu/gfx_v10_0.c
+@@ -28,6 +28,13 @@
+ #include <linux/module.h>
+ #include <linux/pci.h>
+
++/* BC-250 40 CU unlock: clears harvest mask + enables SPI dispatch to all WGPs */
++static int bc250_cc_write_mode;
++module_param(bc250_cc_write_mode, int, 0444);
++MODULE_PARM_DESC(bc250_cc_write_mode,
++	"BC-250: 0=off 1=probe-SE0SH0 2=clear-SE0SH0 3=clear-all-SAs 4=probe-all-SAs");
++#define BC250_PCI_DEVICE_ID 0x13FE
++
+ #include "amdgpu.h"
+ #include "amdgpu_atombios.h"
+ #include "amdgpu_gem.h"
+@@ @@
+ static int gfx_v10_0_get_cu_info(struct amdgpu_device *adev,
+ {
+ 	...
+ 	mutex_lock(&adev->grbm_idx_mutex);
++
++	/* BC-250: unlock harvested CUs by clearing CC mask + enabling SPI dispatch */
++	if (bc250_cc_write_mode > 0 && adev->pdev->device == BC250_PCI_DEVICE_ID) {
++		int bc_se, bc_sh;
++		for (bc_se = 0; bc_se < adev->gfx.config.max_shader_engines; bc_se++) {
++			for (bc_sh = 0; bc_sh < adev->gfx.config.max_sh_per_se; bc_sh++) {
++				u32 bc_cc_orig, bc_cc_after, bc_spi_orig, bc_spi_after;
++				if (bc250_cc_write_mode == 2 && (bc_se > 0 || bc_sh > 0))
++					continue;
++				gfx_v10_0_select_se_sh(adev, bc_se, bc_sh, 0xffffffff, 0);
++
++				/* Clear CC harvest mask — enumeration */
++				bc_cc_orig = RREG32_SOC15(GC, 0, mmCC_GC_SHADER_ARRAY_CONFIG);
++				WREG32_SOC15(GC, 0, mmCC_GC_SHADER_ARRAY_CONFIG, 0);
++				bc_cc_after = RREG32_SOC15(GC, 0, mmCC_GC_SHADER_ARRAY_CONFIG);
++
++				/* Enable SPI dispatch to all 5 WGPs */
++				bc_spi_orig = RREG32_SOC15(GC, 0, mmSPI_PG_ENABLE_STATIC_WGP_MASK);
++				WREG32_SOC15(GC, 0, mmSPI_PG_ENABLE_STATIC_WGP_MASK, 0x1f);
++				bc_spi_after = RREG32_SOC15(GC, 0, mmSPI_PG_ENABLE_STATIC_WGP_MASK);
++
++				/* Keep all WGPs always powered */
++				WREG32_SOC15(GC, 0, mmRLC_PG_ALWAYS_ON_WGP_MASK, 0x1f);
++
++				if (bc250_cc_write_mode == 1 || bc250_cc_write_mode == 4) {
++					WREG32_SOC15(GC, 0, mmCC_GC_SHADER_ARRAY_CONFIG, bc_cc_orig);
++					WREG32_SOC15(GC, 0, mmSPI_PG_ENABLE_STATIC_WGP_MASK, bc_spi_orig);
++					dev_info(adev->dev,
++						"bc250-40cu-probe: se=%d sh=%d CC=0x%08x->0x%08x SPI=0x%08x->0x%08x (restored)",
++						bc_se, bc_sh, bc_cc_orig, bc_cc_after, bc_spi_orig, bc_spi_after);
++				} else {
++					dev_info(adev->dev,
++						"bc250-40cu-enable: mode=%d se=%d sh=%d CC=0x%08x->0x%08x SPI=0x%08x->0x%08x",
++						bc250_cc_write_mode, bc_se, bc_sh,
++						bc_cc_orig, bc_cc_after, bc_spi_orig, bc_spi_after);
++				}
++			}
++		}
++		gfx_v10_0_select_se_sh(adev, 0xffffffff, 0xffffffff, 0xffffffff, 0);
++	}
++
+ 	for (i = 0; i < adev->gfx.config.max_shader_engines; i++) {
