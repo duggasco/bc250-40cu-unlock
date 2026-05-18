@@ -119,6 +119,53 @@ frequency = 1500
 voltage = 900
 ```
 
+## Selective CU Masking
+
+Not all unlocked CUs may be healthy — boards with scattered harvest patterns (`■■□□■■□□■■`) may have defective silicon. You can enable all 40 CUs but selectively mask bad ones via `amdgpu.disable_cu`.
+
+### WGP / CU Mapping (per shader array)
+
+```
+WGP 0 = CU 0,1    (stock active)
+WGP 1 = CU 2,3    (stock active)
+WGP 2 = CU 4,5    (stock active)
+WGP 3 = CU 6,7    (unlocked — test these)
+WGP 4 = CU 8,9    (unlocked — test these)
+```
+
+Disabling works at **WGP granularity** — disabling CU 6 also disables CU 7 (same WGP).
+
+Format: `amdgpu.disable_cu=SE.SH.CU` (comma-separated, added to modprobe config)
+
+### Examples
+
+```bash
+# Enable all 40, but mask WGP 3 in SE1/SH0 (CUs 6-7) — gives 38 CUs
+options amdgpu bc250_cc_write_mode=3 disable_cu=1.0.6,1.0.7
+
+# Mask WGP 4 across all shader arrays — gives 32 CUs
+options amdgpu bc250_cc_write_mode=3 disable_cu=0.0.8,0.0.9,0.1.8,0.1.9,1.0.8,1.0.9,1.1.8,1.1.9
+```
+
+### Automated Health Testing
+
+```bash
+# Run per-WGP isolation test (20 reboots, tests each WGP individually)
+sudo ./scripts/bc250-cu-health-test.sh start
+
+# Quick correctness test on current config (no reboot)
+./scripts/bc250-compute-verify.sh
+
+# Generate disable_cu config from health results
+./scripts/bc250-cu-mask.sh --results /var/lib/bc250-cu-health-test/results.tsv
+
+# Install the mask (adds to modprobe config)
+sudo ./scripts/bc250-cu-mask.sh --results /var/lib/bc250-cu-health-test/results.tsv --install
+
+# View harvest map with health overlay
+./scripts/cu_map.sh --health /var/lib/bc250-cu-health-test/results.tsv
+```
+
 ## Disabling
 
 ```bash
