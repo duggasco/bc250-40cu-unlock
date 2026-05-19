@@ -48,8 +48,9 @@ Requirements: `gcc`, `make`, `zstd`, kernel headers (`linux-headers-$(uname -r)`
 # Get your kernel source
 cd /path/to/linux-source/drivers/gpu/drm/amd/amdgpu/
 
-# Apply
-patch -p5 < /path/to/bc250-40cu-unlock/patch/bc250-40cu-amdgpu.patch
+# Apply (paths in the patch are `a/drivers/gpu/drm/amd/amdgpu/...`, so
+# from amdgpu/ we strip 6 leading components; from kernel root use -p1).
+patch -p6 < /path/to/bc250-40cu-unlock/patch/bc250-40cu-amdgpu.patch
 
 # Build just amdgpu
 make -C /lib/modules/$(uname -r)/build M=$(pwd) -j$(nproc) modules
@@ -63,7 +64,26 @@ echo 'options amdgpu bc250_cc_write_mode=3' | sudo tee /etc/modprobe.d/bc250-40c
 sudo reboot
 ```
 
-### Option 3: CachyOS / Arch
+### Option 3: CachyOS / Arch via DKMS (recommended)
+
+Wraps the patch as a DKMS module so it is automatically rebuilt against every
+new kernel installed via `pacman -Syu` — no more manual rebuilds after kernel
+updates. See [`dkms/README.md`](dkms/README.md) for details.
+
+```bash
+sudo pacman -S --needed dkms base-devel linux-cachyos-headers zstd patch git
+git clone https://github.com/duggasco/bc250-40cu-unlock.git
+cd bc250-40cu-unlock
+sudo ./dkms/install.sh
+
+sudo dracut --regenerate-all --force      # CachyOS on dracut (default)
+# or: sudo mkinitcpio -P                  # CachyOS on mkinitcpio
+sudo reboot
+```
+
+Disable Secure Boot in UEFI first — the DKMS-built module is unsigned.
+
+### Option 4: CachyOS / Arch via kernel PKGBUILD
 
 Apply `patch/bc250-40cu-amdgpu.patch` to your kernel PKGBUILD patch set, rebuild, add the modprobe config.
 
