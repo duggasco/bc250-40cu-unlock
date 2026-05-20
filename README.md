@@ -193,10 +193,17 @@ sudo ./scripts/bc250-enable-40cu.sh disable   # removes config, reboots to 24 CU
 sudo ./scripts/bc250-enable-40cu.sh restore   # restores original amdgpu module
 ```
 
+## Whitepaper
+
+The full academic writeup is available as a PDF:
+
+**[Re-enabling Fused-Off Compute Units on the AMD BC-250 APU via Register-Level Modification](docs/whitepaper-cu-unlock.pdf)** (8 pages)
+
+Covers the complete methodology, 4-state controlled experiment, community harvest map survey (n=58), performance characterization, and dual-register gating architecture analysis. LaTeX source included at [docs/whitepaper-cu-unlock.tex](docs/whitepaper-cu-unlock.tex).
+
 ## Technical Details
 
-See [docs/technical-report.md](docs/technical-report.md) for the full writeup including:
-- 4-state A/B test proving both registers are needed
+See [docs/technical-report.md](docs/technical-report.md) for additional technical notes including:
 - Register map (UMR dumps)
 - Architecture analysis (CC vs SPI vs RLC vs SMU)
 - Why `ignore_cu_harvest` doesn't work
